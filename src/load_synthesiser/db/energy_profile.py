@@ -9,7 +9,7 @@
 #  file, You can obtain one at https://mozilla.org/MPL/2.0/.
 from __future__ import annotations
 from datetime import date
-from typing import Callable, Set, Dict, List
+from typing import Callable, Set, Dict, List, Generator
 
 from bitstring import BitStream
 from dataclassy import dataclass
@@ -38,6 +38,14 @@ class EnergyProfile(object):
     def add_readings(self, in_val: float, out_val: float = 0.0):
         self._kw_in.channel(1).append(in_val)
         self._kw_out.channel(1).append(out_val)
+
+    @property
+    def kw_in(self) -> Readings:
+        return self._kw_in
+
+    @property
+    def kw_out(self) -> Readings:
+        return self._kw_out
 
     def get_kw_in(self, i: int):
         return self._kw_in.get(i)
