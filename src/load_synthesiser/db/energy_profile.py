@@ -19,12 +19,27 @@ from load_synthesiser.db.readings import Readings, encode_7bit_long, OneChannelR
 
 @dataclass
 class NetworkEnergyProfile(object):
+    """
+    A EnergyProfile for a given Feeder
+    """
+
+    feeder_mrid: str
+    "The mRID of the feeder"
+
     transformer_mrids: Set[str]
+    "The mRIDs of the transformers on the feeder"
+
     energy_profile_by_date: Dict[date, List[EnergyProfile]]
+    "A dictionary of dates to lists of EnergyProfiles, where each EnergyProfile represents the profile of a single transformer."
 
 
 @dataclass
 class EnergyProfile(object):
+    """
+    A profile of the kw in and kw out for a given mRID on a given date.
+    There must always be the same number of kw_in as kw_out. Always use `add_readings` to add a new reading to ensure this.
+    """
+
     id: str
     dt: date
     _kw_in: Readings = OneChannelReadings()
@@ -36,6 +51,12 @@ class EnergyProfile(object):
             raise ValueError("Readings must have the same length")
 
     def add_readings(self, in_val: float, out_val: float = 0.0):
+        """
+        Add a reading to this profile
+        :param in_val: The kw into this ID
+        :param out_val: The kw out of this ID.
+        :return:
+        """
         self._kw_in.channel(1).append(in_val)
         self._kw_out.channel(1).append(out_val)
 

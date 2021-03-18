@@ -6,7 +6,8 @@
 
 import sqlite3
 from contextlib import contextmanager
-from typing import Generator, List, Iterable
+from pathlib import Path
+from typing import Generator, List, Iterable, Set
 
 from datetime import date, datetime
 from dataclassy import dataclass
@@ -28,8 +29,9 @@ SCHEMA = [
 ]
 
 
-def write_database(path: str):
-    db = SqliteReadingsDatabase(path)
+def write_database(destdir: str, dt: date):
+    db = SqliteReadingsDatabase(f"{destdir}/{dt.isoformat()}/{dt.isoformat()}-load-readings.sqlite", dt)
+    Path(f"{destdir}/{dt.isoformat()}").mkdir(parents=True, exist_ok=True)
     db.initialise()
     return db
 
@@ -38,9 +40,12 @@ def write_database(path: str):
 class SqliteDatabase(object):
     path: str
 
+    _entity_ids_written: bool = False
+
     @contextmanager
     def connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)
+        conn.isolation_level = None  # autocommit off
         yield conn
         conn.commit()
         conn.close()
@@ -49,13 +54,19 @@ class SqliteDatabase(object):
     def cursor(self) -> Generator[sqlite3.Cursor, None, None]:
         with self.connection() as conn:
             cursor = conn.cursor()
+            cursor.execute("PRAGMA journal_mode = OFF")
+            cursor.execute("PRAGMA synchronous = OFF")
             yield cursor
             cursor.close()
 
     def write_entity_ids(self, entity_ids: Iterable[str]):
+        if self._entity_ids_written:
+            return
+
         with self.cursor() as c:
             for id in entity_ids:
                 c.execute(f"INSERT INTO entity_ids VALUES (NULL, '{id}')")
+        self._entity_ids_written = True
 
 
 class SqliteReadingsDatabase(SqliteDatabase):
@@ -64,18 +75,24 @@ class SqliteReadingsDatabase(SqliteDatabase):
     SQL_INSERT_W_OUT_FORMAT = f"INSERT INTO W_out (id, data) VALUES ({SELECT_ID_FROM_INDEX}, ?)"
     SQL_INSERT_MAXIMUMS = f"INSERT INTO maximums (id, data) VALUES ({SELECT_ID_FROM_INDEX}, ?)"
     SQL_INSERT_CACHEABLE = f"INSERT INTO cacheable (id, data) VALUES ({SELECT_ID_FROM_INDEX}, ?)"
+    _SCHEMA_CHECK_SQL = f"SELECT tbl_name from sqlite_schema WHERE tbl_name = 'W_in'"
+    dt: date
+    _entity_ids: Set[str] = set()
 
     def initialise(self):
         self.create_schema()
 
-    def finalise(self, dt: date):
-        self.write_metadata(dt.isoformat())
+    def finalise(self):
+        self.write_metadata(self.dt.isoformat())
 
     def create_schema(self):
         with self.connection() as conn:
             cursor = conn.cursor()
-            for ddl in SCHEMA:
-                cursor.execute(ddl)
+            exists = cursor.execute(self._SCHEMA_CHECK_SQL)
+            x = exists.fetchone()
+            if not x:
+                for ddl in SCHEMA:
+                    cursor.execute(ddl)
 
     def write_metadata(self, dt):
         with self.cursor() as c:
@@ -86,6 +103,9 @@ class SqliteReadingsDatabase(SqliteDatabase):
     def write_readings(self, energy_profiles: Iterable[EnergyProfile]):
         with self.cursor() as c:
             for profile in energy_profiles:
+                if profile.id in self._entity_ids:  # id may be in multiple feeders, in which case it only gets stored in the DB once
+                    continue
+                self._entity_ids.add(profile.id)
                 serialised_readings_in = readings_sx(profile.kw_in).read("bytes")
                 serialised_readings_out = readings_sx(profile.kw_out).read("bytes")
                 c.execute(self.SQL_INSERT_W_IN_FORMAT, (profile.id, serialised_readings_in))
