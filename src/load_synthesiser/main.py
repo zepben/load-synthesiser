@@ -5,11 +5,14 @@
 #  file, You can obtain one at https://mozilla.org/MPL/2.0/.
 import argparse
 import logging
+import os
+import shutil
 from datetime import datetime, date
 from pathlib import Path
 from typing import Set, Dict, List
 
-from zepben.evolve import connect, NetworkService, SyncNetworkConsumerClient, PowerTransformer, ConductingEquipment
+from zepben.evolve import connect, NetworkService, SyncNetworkConsumerClient, PowerTransformer, ConductingEquipment, \
+    Feeder
 import csv
 
 from load_synthesiser.db.energy_profile import EnergyProfile, NetworkEnergyProfile
@@ -72,7 +75,7 @@ def load_energy_data(path: str, feeder_mrids, power_ratings: Dict[str, Dict[str,
     return neps
 
 
-def load_data(path: str, client: SyncNetworkConsumerClient, feeder_mrids: Set[str], output_dir):
+def load_data(path: str, client: SyncNetworkConsumerClient, feeder_mrids: Set[str], output_dir, clean_dir):
     """
     Does some dumb load apportioning on some feeders and then writes out load databases to output_dir
     :param path: Path to the load CSV
@@ -81,20 +84,25 @@ def load_data(path: str, client: SyncNetworkConsumerClient, feeder_mrids: Set[st
     :param output_dir: Output directory for generated databases
     """
     # Create the output directory, throwing if it already exists.
+    if os.path.exists(output_dir):
+        if clean_dir:
+            shutil.rmtree(os.path.join(os.getcwd(), output_dir))
+        else:
+            raise EnvironmentError(f"'{output_dir}' exists, please remove or provide --clean-data-dir parameter")
     Path(output_dir).mkdir(exist_ok=False)
 
     power_ratings = dict()
 
     # Fetch the relevant network and store it by feeder. This is used for
     for feeder_mrid in feeder_mrids:
-        ns = NetworkService()
-        client.get_feeder(ns, feeder_mrid).throw_on_error()
+        client.get_equipment_container(feeder_mrid, Feeder).throw_on_error()
+        feeder = client.service.get(feeder_mrid, Feeder)
 
         total_power_rating = 0
         power_ratings[feeder_mrid] = dict()
         feeder_power_ratings = dict()
         # Apportion load between all transformers based on their rating
-        for pt in ns.objects(PowerTransformer):
+        for pt in filter(lambda x: isinstance(x, PowerTransformer), feeder.equipment):
             rated_s = pt.get_end_by_num(1).rated_s  # Only care about rated_s on HV side of the transformer
             if rated_s == 0:
                 rated_s = pt.get_end_by_num(2).rated_s
@@ -149,6 +157,7 @@ def main():
     parser.add_argument('--cert', help='Signed certificate for your client', default="")
     parser.add_argument('--key', help='Private key for signed cert', default="")
     parser.add_argument('--output-dir', help='Output directory for database files', default="data")
+    parser.add_argument('--clean-data-dir', help='Clear the data directory if present', action="store_true")
 
     args = parser.parse_args()
     if not args.load_csv:
@@ -176,7 +185,7 @@ def main():
                  cert=cert, ca=ca) as channel:
         client = SyncNetworkConsumerClient(channel)
 
-        load_data(args.load_csv, client, args.feeder, args.output_dir)
+        load_data(args.load_csv, client, args.feeder, args.output_dir, args.clean_data_dir)
 
 
 if __name__ == "__main__":
