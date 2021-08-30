@@ -33,7 +33,7 @@ setup(
     packages=find_namespace_packages(where="src"),
     python_requires='>=3.7',
     install_requires=[
-        "zepben.evolve==0.23.0b7",
+        "zepben.evolve==0.23.0b27",
         "dataclassy==0.6.2",
         "bitstring==3.1.7"
     ],
